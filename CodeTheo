@@ -1,0 +1,353 @@
+#import code exterieur
+
+from math import *
+from types import SimpleNamespace
+import tkinter as tk
+from tkinter import ttk
+
+class Vect2(tuple):
+    def __add__(self, a):
+        # TODO: check lengths are compatable.
+        return Vect2(x + y for x, y in zip(self, a))
+    def __sub__(self, a):
+        # TODO: check lengths are compatable.
+        return Vect2(x - y for x, y in zip(self, a))
+    def __mul__(self, c):
+        return Vect2(x * c for x in self)
+    def __rmul__(self, c):
+        return Vect2(c * x for x in self)
+VectNul = Vect2( (0, 0) )
+
+
+def dist(a, b):
+    return sqrt((a[0]-b[0])**2 + (a[1]-b[1])**2)
+
+#================================================================
+
+#ALERT !!
+#Les coord de mes Cell sont TOUJOURS celles de son CENTRE (et pas celles de son coin bas gauche)
+#ALERT !!
+
+#On travaille en radians et en mètres
+#le point de coordonées 0,0 se trouve en long = 0, lat = -latitudeMaxPoles
+#la case d'indice 0, 0 se trouve en long = 0, lat = -latitudeMaxPoles
+
+
+#constantes physiques
+rayonTerre = 6.371e6
+masse_vol_soufre = 1    #je n'e ai actuellement aucune idée
+
+#constantes relatives à la carte
+#suseptibles d'être changées
+largeurMondeCell  = 20 #nombre de Cells en largeur  (en Y) 
+longueurMondeCell = 50 #nombre de Cells en longueur (en X)
+
+#on se place au level 80
+#donc
+a_lnsp =19620.042969
+b_lnsp = 0.068448
+
+
+
+latitudeMaxPoles = radians(45)                   #Au dessus de cet angle, on est dans les pôles
+#donc
+largeurMonde = 2*rayonTerre*sin(latitudeMaxPoles)                       #taille (en mètre) (et en Y) du monde
+longueurMonde = 2*pi*rayonTerre                                         #taille (en mètre) (et en X) du monde
+#donc 
+largeurCell = largeurMonde/largeurMondeCell   # (en mètre) la taille (en Y) d'une cell
+longueurCell = longueurMonde/longueurMondeCell # (en mètre) de même
+hauteurCell  = 10   # (en mètre) complétement arbitraire, ne sert que pour l'homogénéité des formules
+#donc
+A0 = largeurCell * longueurCell  #Aire d'une Cell
+V0 = A0 * hauteurCell           #Volume d'une Cell
+
+tkLongueurCell = 20 #(en pixel, uniquement pour le dessin)
+tkLargeurCell = 20 #(en pixel, uniquement pour le dessin)
+
+
+dt = 1
+
+
+#=======================
+#tkinter
+
+root = tk.Tk()
+root.geometry("1280x1024")
+root.title('Youpi ?')
+
+canvas = tk.Canvas(root,bg='white', width = 1280,height = 1024)
+
+
+
+class Cell:
+    
+    def __init__(self, estUnPole, masse, i, j, taille = Vect2((longueurCell, largeurCell))):
+
+        if estUnPole:
+            self.m = masse                                          #masse de SOUFRE dans la Cell
+            
+            
+        else:
+            self.m = masse                                          #masse de SOUFRE dans la Cell
+            self.a = Vect2((0, 0))                                  #acc de l'AIR
+            self.v = Vect2((0, 0))                                  #vitesse de l'AIR
+
+            self.t = taille                                         #Taille (largeur longueur) de la cell
+            self.V = self.t[0]*self.t[1]*hauteurCell                #volume de la cell
+
+            self.ij = (i, j)
+            self.coord = Vect2(((i+0.5)*longueurCell, (j+0.5)*largeurCell))
+
+            self.pression = 0                                       #valeur par défaut
+
+            #==========================
+            #variables seulement pour l'importation de la base de données
+            self.val = 0
+            self.nbData = 0
+            
+    
+class Carte: #l'objet que doit gérer Jb
+    
+    def __init__(self): #Par exemple
+        
+        self.cells = []
+        
+        for i in range(longueurMondeCell):
+            self.cells.append([])
+            for j in range(largeurMondeCell):
+                self.cells[i].append(Cell(False, 0, i, j, Vect2((longueurCell, largeurCell)))) #on initialise les cell à une qté nulle de soufre
+                #self.cells[i][j] =
+        
+        self.poleNord = Cell(True, 0, -1, -1)
+        self.poleSud = Cell(True, 0, -1, -1)
+
+    def cellFromCoord(self, coord):
+        #Je mets en entrée des distances (en Mètres)
+
+        x = coord[0]
+        y = coord[1]
+
+        if abs(y) >= largeurMonde/2:
+            if y < 0:
+                return self.poleSud
+            else:
+                return self.poleNord
+        else:
+            indX = x//longueurCell
+            indY = y//largeurCell
+
+            return self.cells[indX][indY]
+    
+    def cellFromLatLongRad(self, latitude, longitude):
+        #je mets en entrée des coordonnées du monde réel ***(latitude longitude)***. L'entrée peut être négative, pointer sur les pôles, être à la jonction de 2 cells
+        #j'ai en sortie la cell dans laquelle je tombe (donc soit une cell, soit les pôles)
+        #si je suis sur une ligne, c'est le droite haut qui gagne
+        
+        #Mes lat,long sont des RADIANS, et sont algébriques
+
+        if abs(latitude) >= latitudeMaxPoles:
+            if latitude > 0:
+                return self.poleNord
+            else:
+                return self.poleSud
+
+        else:
+            largeurCalc = rayonTerre*sin(latitude)  #on a une distance
+            indY = (largeurCalc + largeurMonde/2)//largeurCell
+           
+            longueurCalc = longitude*rayonTerre      #on a une distance
+            indX = longueurCalc//longueurCell         
+
+            return self.cells[indX][indY]
+        
+    def cellFromLatLongDeg(self, latitude, longitude):
+        return self.cellFromLatLongRad(radians(latitude), radians(longitude))
+    
+
+    def cellsFromCellAndCoord(self, cell):
+        #c'est le fameux truc que j'ai demandé à Cointault : quand j'additione les coords de la case à son vecteur vitesse, quelles cases je touche et dans quelles proportions ?
+        #en sortie j'ai une liste tuples (cell, float) avec les cells que je touche et quelle proportion (avec le float)
+
+        coord = cell.coord
+        
+        #je sais quelles cases mes extrémités touchent
+        coordCoinDH = coord + Vect2( ( cell.t[0]/2,  cell.t[1]/2) ) + cell.v #coin droite haut
+        coordCoinDB = coord + Vect2( ( cell.t[0]/2, -cell.t[1]/2) ) + cell.v
+        coordCoinGB = coord + Vect2( (-cell.t[0]/2, -cell.t[1]/2) ) + cell.v
+        coordCoinGH = coord + Vect2( (-cell.t[0]/2,  cell.t[1]/2) ) + cell.v
+        
+        cellCoinDH = self.cellFromCoord(coordCoinDH)
+        cellCoinDB = self.cellFromCoord(coordCoinDB)
+        cellCoinGB = self.cellFromCoord(coordCoinGB)
+        cellCoinGH = self.cellFromCoord(coordCoinGH)
+        
+        xinter = (coordCoinDH[0] // longueurCell) #+ coordCoinDH[0] % longueurCell
+        yinter = (coordCoinDH[1] // largeurCell) #+ coordCoinDH[1] % largeurCell
+        vectInter = Vect2((xinter, yinter))
+    
+        aireDH = (dist(cellCoinDH, vectInter)/sqrt(2))**2
+        aireDB = (dist(cellCoinDH, vectInter)/sqrt(2))**2
+        aireGB = (dist(cellCoinDH, vectInter)/sqrt(2))**2
+        aireGH = (dist(cellCoinDH, vectInter)/sqrt(2))**2
+        #normalement, on a aireDH + ... + aireGH = largeurCell*longueurCell (=A0)
+
+        rep = []
+        rep.append( (cellCoinDH, aireDH/A0) )
+        rep.append( (cellCoinDB, aireDB/A0) )
+        rep.append( (cellCoinGB, aireGB/A0) )
+        rep.append( (cellCoinGH, aireGH/A0) )
+        
+        #donc return [ [cell, float]; [...] ]
+        return rep
+        
+    
+    def accToVitesse(self, cell):
+        cell.v += cell.a * dt
+        
+    def updateCells(self, matriceAccAir):
+        
+        for i in range(longueurMondeCell):
+            for j in range(largeurMondeCell):
+                
+                cell = self.cells[i][j]
+                
+                cell.a = Vect2((0, 0))
+                cell.a = matriceAccAir[i][j]
+                
+                self.accToVitesse(cell)
+                
+                
+                destinations = self.cellsFromCellAndCoord(cell)
+                #on enlève le soufre dans la case originelle
+                m0 = cell.m
+                cell.m = 0
+                #pour enventuellement le remettre si il ne s'est pas trop déplacé
+                for e in destinations:
+                    if e.estUnPole:
+                        #à remplir
+                        a = 1
+                    else:
+                        e[0].val += m0*e[1]    #on le met dans .val temporairement car on ne peut pas le mettre directement dans .m
+                
+                
+        for i in range(longueurMondeCell):
+            for j in range(largeurMondeCell):
+                cell = self.cells[i][j]
+                
+                cell.m = cell.val
+            
+        
+    def draw(self): 
+        
+        for i in range(longueurMondeCell):
+            for j in range(largeurMondeCell):
+                canvas.create_rectangle( i*tkLongueurCell, j*tkLargeurCell,
+                                         (i+1)*tkLongueurCell, (j+1)*tkLargeurCell,
+                                         fill="red", dash=(5, 0))
+                
+        
+
+
+def Update(carte0, carte_pression):
+    
+    matriceAccAir = passage_carte_pression_carte_acceleration_selon_x_et_y( carte_pression )
+    
+    carte0.updateCells(matriceAccAir)
+    
+def Draw(carte0):
+    carte0.draw()
+    
+
+def animate (carte0, carte_pression):
+    
+    #Update(carte0, carte_pression)
+    Draw(carte0)
+    
+    root.mainloop()
+    
+
+cart = Carte()
+
+animate(cart, None)    
+
+#============================================================================
+#tentative Tkinter
+
+
+
+
+
+
+    
+    
+
+#============================================================
+#essai adaptation code Jb
+
+def passage_carte_pression_carte_acceleration_selon_x_et_y (carte_pression):
+    matX = passage_carte_pression_carte_acceleration_selon_x(masse_vol_soufre, carte_pression)
+    matY = passage_carte_pression_carte_acceleration_selon_y(masse_vol_soufre, carte_pression)
+
+    (n, m) = matX.shape
+    mat_fin = []
+    for i in range(n):
+        mat_fin.append([])
+        for j in range(m):
+            mat_fin[i].append( (matX[i][j], matY[i][j]) )
+            
+    return mat_fin
+
+
+#==================================================================
+#import des données
+#designé avec le fichier grib en tête, peut-être inutile
+def importBigArray(carte0, ba):
+    #[lat, lon, lnsp]
+
+    n = len(ba)
+    for i in range(n):
+        cell0 = carte0.cellFromLatLongRad(ba[0], ba[1])
+
+        cell0.val += ba[2]
+        cell0.nbData += 1
+
+    for i in range(longueurMondeCell):
+        for j in range(largeurMondeCell):
+            carte0[i][j].val = carte0[i][j].val/carte0[i][j].nbData
+
+    #Calcul pression finale
+    #on se place au "level" 80
+            
+    for i in range(longueurMondeCell):
+        for j in range(largeurMondeCell):
+            carte0[i][j].pression = carte0[i][j].val*a_lnsp + b_lnsp
+    
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
