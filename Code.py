@@ -347,3 +347,7 @@ pas_elementaire=passage_position_élémentaire(2,4,100,2,4,10,[[1,2,10,15,12,30]
 #7 Création de la fonction totale : temps de la mesure finale, table initial, carte accélération -> Table final
 
 #8 def extraction : table final -> Image avec les quantités de matières
+
+
+
+#test ?
